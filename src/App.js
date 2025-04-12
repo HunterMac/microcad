@@ -6,6 +6,7 @@ const MAX_ZOOM = 5;
 const ZOOM_STEP = 0.1;
 // 1 grid unit = 1cm at 100% zoom
 const MM_PER_GRID = 10; // 1cm = 10mm
+const STORAGE_KEY = "cad_project_data";
 
 export default function App() {
   const [lines, setLines] = useState([]);
@@ -20,7 +21,46 @@ export default function App() {
   const [selectedLine, setSelectedLine] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState(null);
+  const [showDimensions, setShowDimensions] = useState(false);
+  const [isHoveringEndpoint, setIsHoveringEndpoint] = useState(false);
+  const [hoveredLineId, setHoveredLineId] = useState(null);
   const canvasRef = useRef(null);
+
+  // Load project from local storage on initial render
+  useEffect(() => {
+    const savedData = localStorage.getItem(STORAGE_KEY);
+    if (savedData) {
+      try {
+        const parsedData = JSON.parse(savedData);
+        if (Array.isArray(parsedData)) {
+          setLines(parsedData);
+        }
+      } catch (error) {
+        console.error("Error loading project from local storage:", error);
+      }
+    }
+  }, []);
+
+  // Debounce local storage saves to prevent excessive writes
+  useEffect(() => {
+    const saveTimeout = setTimeout(() => {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(lines));
+    }, 1000); // Save after 1 second of inactivity
+    
+    return () => clearTimeout(saveTimeout);
+  }, [lines]);
+
+  const distance = useCallback((p1, p2) => {
+    return Math.sqrt((p1.x - p2.x) ** 2 + (p1.y - p2.y) ** 2);
+  }, []);
+
+  const calculateLength = useCallback((p1, p2) => {
+    if (!p1 || !p2) return 0;
+    // Calculate length in grid units
+    const gridLength = distance(p1, p2) / GRID_SIZE;
+    // Convert to mm (1 grid unit = 1cm = 10mm)
+    return Math.round(gridLength * MM_PER_GRID);
+  }, [distance]);
 
   const drawGrid = useCallback((ctx) => {
     ctx.strokeStyle = "#ddd";
@@ -47,6 +87,71 @@ export default function App() {
     }
   }, [zoom, offset]);
 
+  const drawLine = useCallback((ctx, line, color = "black") => {
+    ctx.strokeStyle = color;
+    // Set minimum line width for lines
+    ctx.lineWidth = Math.max(1, 1 / zoom);
+    ctx.beginPath();
+    ctx.moveTo(line.start.x, line.start.y);
+    ctx.lineTo(line.end.x, line.end.y);
+    ctx.stroke();
+    
+    // Draw dimensions if enabled
+    if (showDimensions) {
+      const length = calculateLength(line.start, line.end);
+      const midX = (line.start.x + line.end.x) / 2;
+      const midY = (line.start.y + line.end.y) / 2;
+      
+      // Determine if the line is more horizontal or vertical
+      const isHorizontal = Math.abs(line.end.x - line.start.x) > Math.abs(line.end.y - line.start.y);
+      
+      // Set text properties
+      ctx.font = `${Math.max(10, 10 / zoom)}px Arial`;
+      ctx.fillStyle = "blue";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      
+      // Position text based on line orientation
+      if (isHorizontal) {
+        // For horizontal lines, place text below
+        ctx.fillText(`${length} mm`, midX, midY + 15 / zoom);
+      } else {
+        // For vertical lines, place text to the right with a 2cm margin
+        // 1cm = 10mm = 1 grid unit at 100% zoom
+        // Use a fixed pixel value that scales with zoom to ensure consistent spacing
+        const margin = 30 * (zoom); // Fixed pixel value that scales with zoom
+        ctx.fillText(`${length} mm`, midX + margin, midY);
+      }
+    }
+  }, [zoom, showDimensions, calculateLength]);
+
+  const drawSnapIndicator = useCallback((ctx, point) => {
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(point.x, point.y, 6, 0, 2 * Math.PI);
+    
+    // Set color based on mode
+    if ((isUpdateMode && selectedPoint) || (isUpdateMode && isHoveringEndpoint)) {
+      // Red for update mode when selecting or hovering over an endpoint
+      ctx.strokeStyle = "red";
+    } else {
+      // Green for normal drawing mode or when not hovering over an endpoint
+      ctx.strokeStyle = "green";
+    }
+    
+    // Set line width based on whether we're actively drawing a line
+    if (currentPoint) {
+      // When actively drawing, use a thicker line
+      ctx.lineWidth = Math.max(2, 2 / zoom);
+    } else {
+      // When not actively drawing, use a thinner line
+      ctx.lineWidth = Math.max(1, 1 / zoom);
+    }
+    
+    ctx.stroke();
+    ctx.restore();
+  }, [zoom, currentPoint, isUpdateMode, selectedPoint, isHoveringEndpoint]);
+
   useEffect(() => {
     const canvas = canvasRef.current;
     const ctx = canvas.getContext("2d");
@@ -61,7 +166,14 @@ export default function App() {
     
     // Draw all lines
     lines.forEach((line, index) => {
-      const color = index === selectedLine ? "red" : "black";
+      // Determine line color based on selection and hover state
+      let color = "black";
+      if (index === selectedLine) {
+        color = "red";
+      } else if (line.id === hoveredLineId) {
+        color = "red";
+      }
+      
       drawLine(ctx, line, color);
     });
     
@@ -72,7 +184,7 @@ export default function App() {
       drawSnapIndicator(ctx, snapPoint);
     }
     ctx.restore();
-  }, [lines, currentPoint, hoverPoint, snapPoint, zoom, offset, drawGrid, selectedLine]);
+  }, [lines, currentPoint, hoverPoint, snapPoint, zoom, offset, drawGrid, selectedLine, drawLine, drawSnapIndicator, showDimensions, hoveredLineId]);
 
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -89,6 +201,13 @@ export default function App() {
       }
       if (e.key === 'Control') {
         setIsUpdateMode(true);
+      }
+      // Delete selected line when Delete key is pressed in update mode
+      if (e.key === 'Delete' && isUpdateMode && selectedLine !== null) {
+        const updatedLines = [...lines];
+        updatedLines.splice(selectedLine, 1);
+        setLines(updatedLines);
+        setSelectedLine(null);
       }
     };
 
@@ -109,28 +228,7 @@ export default function App() {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [currentPoint, selectedLine]);
-
-  const drawLine = (ctx, line, color = "black") => {
-    ctx.strokeStyle = color;
-    // Set minimum line width for lines
-    ctx.lineWidth = Math.max(1, 1 / zoom);
-    ctx.beginPath();
-    ctx.moveTo(line.start.x, line.start.y);
-    ctx.lineTo(line.end.x, line.end.y);
-    ctx.stroke();
-  };
-
-  const drawSnapIndicator = (ctx, point) => {
-    ctx.save();
-    ctx.beginPath();
-    ctx.arc(point.x, point.y, 6, 0, 2 * Math.PI);
-    ctx.strokeStyle = "green";
-    // Set minimum line width for snap indicator
-    ctx.lineWidth = Math.max(2, 2 / zoom);
-    ctx.stroke();
-    ctx.restore();
-  };
+  }, [currentPoint, selectedLine, isUpdateMode, lines]);
 
   const snapToGrid = (x, y) => {
     const scaledX = (x - offset.x) / zoom;
@@ -139,10 +237,6 @@ export default function App() {
       x: Math.round(scaledX / GRID_SIZE) * GRID_SIZE,
       y: Math.round(scaledY / GRID_SIZE) * GRID_SIZE,
     };
-  };
-
-  const distance = (p1, p2) => {
-    return Math.sqrt((p1.x - p2.x) ** 2 + (p1.y - p2.y) ** 2);
   };
 
   const findNearbyPoint = (point, threshold = 10) => {
@@ -155,14 +249,6 @@ export default function App() {
       }
     }
     return null;
-  };
-
-  const calculateLength = (p1, p2) => {
-    if (!p1 || !p2) return 0;
-    // Calculate length in grid units
-    const gridLength = distance(p1, p2) / GRID_SIZE;
-    // Convert to mm (1 grid unit = 1cm = 10mm)
-    return Math.round(gridLength * MM_PER_GRID);
   };
 
   const handleWheel = (e) => {
@@ -292,12 +378,35 @@ export default function App() {
     if (nearbyPoint) {
       snapped = nearbyPoint;
       setSnapPoint(nearbyPoint);
+      
+      // If in update mode, set the hovering endpoint flag
+      if (isUpdateMode) {
+        setIsHoveringEndpoint(true);
+      }
     } else {
-      setSnapPoint(null);
+      // Always show snap point, even when snapping to grid
+      setSnapPoint(snapped);
+      // Reset the hovering endpoint flag when not hovering over an endpoint
+      setIsHoveringEndpoint(false);
+    }
+    
+    // Check if we're hovering over a line in update mode
+    if (isUpdateMode && !isDragging) {
+      const lineAtPoint = findLineAtPoint(snapped);
+      if (lineAtPoint) {
+        setHoveredLineId(lines[lineAtPoint.index].id);
+      } else {
+        setHoveredLineId(null);
+      }
+    } else {
+      setHoveredLineId(null);
     }
     
     // Handle dragging in update mode
     if (isUpdateMode && isDragging && dragStart) {
+      // Hide snap indicator when dragging in update mode
+      setSnapPoint(null);
+      
       if (selectedPoint) {
         // Moving a line endpoint - ensure it snaps to grid
         const updated = lines.map((line) => {
@@ -340,12 +449,15 @@ export default function App() {
       return;
     }
     
-    // Only update hover point if we're currently drawing a line and not in update mode
+    // Update hover point and current length if we're currently drawing a line
     if (currentPoint && !isUpdateMode) {
       setHoverPoint(snapped);
       // Calculate and update the current length
       const length = calculateLength(currentPoint, snapped);
       setCurrentLength(length);
+    } else if (!isUpdateMode) {
+      // In default drawing mode (not update mode), always show snap point
+      setHoverPoint(snapped);
     }
   };
 
@@ -441,7 +553,6 @@ export default function App() {
   };
 
   const handleSave = (e) => {
-    console.log('Save clicked!');
     const text = JSON.stringify(lines);
     const blob = new Blob([text], { type: "text/plain" });
     const link = document.createElement("a");
@@ -473,11 +584,7 @@ export default function App() {
         <input
           type="button"
           value="Save"
-          onClick={(e) => {
-            e.preventDefault();
-            console.log('in tag event click save!');
-            handleSave();
-          }}
+          onClick={handleSave}
           className="mr-2 px-4 py-2 border rounded cursor-pointer"
         />
         <input type="file" onChange={handleLoad} />
@@ -489,6 +596,16 @@ export default function App() {
             onClick={handleResetZoom}
             className="px-4 py-2 border rounded cursor-pointer"
           />
+        </div>
+        <div className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            id="showDimensions"
+            checked={showDimensions}
+            onChange={(e) => setShowDimensions(e.target.checked)}
+            className="mr-1"
+          />
+          <label htmlFor="showDimensions">Display dimensions</label>
         </div>
       </div>
       <canvas
