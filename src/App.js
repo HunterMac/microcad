@@ -19,6 +19,7 @@ export default function App() {
   const [zoom, setZoom] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const [currentLength, setCurrentLength] = useState(0);
+  const [inputLength, setInputLength] = useState("");
   const [isUpdateMode, setIsUpdateMode] = useState(false);
   const [selectedLine, setSelectedLine] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -28,6 +29,7 @@ export default function App() {
   const [isHoveringEndpoint, setIsHoveringEndpoint] = useState(false);
   const [hoveredLineId, setHoveredLineId] = useState(null);
   const [canvasSize, setCanvasSize] = useState({ width: 1200, height: 800 });
+  const [useFineGrid, setUseFineGrid] = useState(false);
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
 
@@ -102,36 +104,102 @@ export default function App() {
     return Math.round(gridLength * MM_PER_GRID);
   }, [distance]);
 
-  const drawGrid = useCallback((ctx) => {
-    ctx.strokeStyle = "#ddd";
-    const scaledGridSize = GRID_SIZE;
+  const calculateEndPointFromLength = useCallback((startPoint, length, direction = null) => {
+    if (!startPoint || !length) return null;
     
+    // Convert length from mm to grid units
+    const gridLength = length / MM_PER_GRID;
+    
+    // Calculate angle based on direction or default to horizontal
+    const angle = direction 
+      ? Math.atan2(direction.y, direction.x)
+      : 0;
+    
+    // Calculate end point using trigonometry
+    return {
+      x: startPoint.x + gridLength * GRID_SIZE * Math.cos(angle),
+      y: startPoint.y + gridLength * GRID_SIZE * Math.sin(angle)
+    };
+  }, []); // No dependencies needed as we're using constants
+
+  const drawGrid = useCallback((ctx) => {
     // Get the current canvas dimensions
     const canvasWidth = canvasRef.current.width;
     const canvasHeight = canvasRef.current.height;
     
-    // Calculate grid boundaries based on current canvas size
-    const startX = Math.floor(-offset.x / zoom / scaledGridSize) * scaledGridSize;
-    const startY = Math.floor(-offset.y / zoom / scaledGridSize) * scaledGridSize;
-    const endX = Math.ceil((canvasWidth - offset.x) / zoom / scaledGridSize) * scaledGridSize;
-    const endY = Math.ceil((canvasHeight - offset.y) / zoom / scaledGridSize) * scaledGridSize;
+    if (useFineGrid) {
+      // Draw fine grid (1mm) only
+      ctx.strokeStyle = "#ddd";
+      const fineGridSize = GRID_SIZE / 10;
+      
+      // Calculate grid boundaries based on current canvas size
+      const startX = Math.floor(-offset.x / zoom / fineGridSize) * fineGridSize;
+      const startY = Math.floor(-offset.y / zoom / fineGridSize) * fineGridSize;
+      const endX = Math.ceil((canvasWidth - offset.x) / zoom / fineGridSize) * fineGridSize;
+      const endY = Math.ceil((canvasHeight - offset.y) / zoom / fineGridSize) * fineGridSize;
 
-    // Set minimum line width for grid
-    ctx.lineWidth = Math.max(1, 1 / zoom);
+      // Save the current context state
+      ctx.save();
+      
+      // Reset the transformation to ensure 1px lines
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      
+      // Apply only the translation part of the transformation
+      ctx.translate(offset.x, offset.y);
+      
+      // Set line width to 1px for fine grid
+      ctx.lineWidth = 1;
 
-    for (let x = startX; x < endX; x += scaledGridSize) {
-      ctx.beginPath();
-      ctx.moveTo(x, startY);
-      ctx.lineTo(x, endY);
-      ctx.stroke();
+      // Draw vertical fine grid lines
+      for (let x = startX; x < endX; x += fineGridSize) {
+        const screenX = x * zoom;
+        ctx.beginPath();
+        ctx.moveTo(screenX, startY * zoom);
+        ctx.lineTo(screenX, endY * zoom);
+        ctx.stroke();
+      }
+      
+      // Draw horizontal fine grid lines
+      for (let y = startY; y < endY; y += fineGridSize) {
+        const screenY = y * zoom;
+        ctx.beginPath();
+        ctx.moveTo(startX * zoom, screenY);
+        ctx.lineTo(endX * zoom, screenY);
+        ctx.stroke();
+      }
+      
+      // Restore the context state
+      ctx.restore();
+    } else {
+      // Draw regular grid (10mm)
+      ctx.strokeStyle = "#ddd";
+      
+      // Calculate grid boundaries based on current canvas size
+      const startX = Math.floor(-offset.x / zoom / GRID_SIZE) * GRID_SIZE;
+      const startY = Math.floor(-offset.y / zoom / GRID_SIZE) * GRID_SIZE;
+      const endX = Math.ceil((canvasWidth - offset.x) / zoom / GRID_SIZE) * GRID_SIZE;
+      const endY = Math.ceil((canvasHeight - offset.y) / zoom / GRID_SIZE) * GRID_SIZE;
+
+      // Set minimum line width for regular grid
+      ctx.lineWidth = Math.max(1, 1 / zoom);
+
+      // Draw vertical grid lines
+      for (let x = startX; x < endX; x += GRID_SIZE) {
+        ctx.beginPath();
+        ctx.moveTo(x, startY);
+        ctx.lineTo(x, endY);
+        ctx.stroke();
+      }
+      
+      // Draw horizontal grid lines
+      for (let y = startY; y < endY; y += GRID_SIZE) {
+        ctx.beginPath();
+        ctx.moveTo(startX, y);
+        ctx.lineTo(endX, y);
+        ctx.stroke();
+      }
     }
-    for (let y = startY; y < endY; y += scaledGridSize) {
-      ctx.beginPath();
-      ctx.moveTo(startX, y);
-      ctx.lineTo(endX, y);
-      ctx.stroke();
-    }
-  }, [zoom, offset]);
+  }, [zoom, offset, useFineGrid]);
 
   const drawLine = useCallback((ctx, line, color = "black") => {
     ctx.strokeStyle = color;
@@ -279,24 +347,62 @@ export default function App() {
     };
   }, [currentPoint, selectedLine, isUpdateMode, lines]);
 
+  // Add keyboard event handler for Escape key
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        // Reset all selection states
+        setSelectedPoint(null);
+        setSelectedLine(null);
+        setCurrentPoint(null);
+        setHoverPoint(null);
+        setSnapPoint(null);
+        setCurrentLength(0);
+        setInputLength("");
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, []);
+
   const snapToGrid = (x, y) => {
     const scaledX = (x - offset.x) / zoom;
     const scaledY = (y - offset.y) / zoom;
+    
+    // Use fine grid size when fine grid is enabled
+    const gridSize = useFineGrid ? GRID_SIZE / 10 : GRID_SIZE;
+    
     return {
-      x: Math.round(scaledX / GRID_SIZE) * GRID_SIZE,
-      y: Math.round(scaledY / GRID_SIZE) * GRID_SIZE,
+      x: Math.round(scaledX / gridSize) * gridSize,
+      y: Math.round(scaledY / gridSize) * gridSize,
     };
   };
 
   const findNearbyPoint = (point, threshold = 10) => {
+    // Convert point to canvas coordinates if needed
+    const canvasPoint = {
+      x: (point.x - offset.x) / zoom,
+      y: (point.y - offset.y) / zoom
+    };
+    
+    // First check if we're near any endpoint
     for (let line of lines) {
-      if (distance(line.start, point) < threshold) {
+      if (distance(line.start, canvasPoint) < threshold) {
         return line.start;
       }
-      if (distance(line.end, point) < threshold) {
+      if (distance(line.end, canvasPoint) < threshold) {
         return line.end;
       }
     }
+    
+    // If we're drawing a new line and have a current point, also check if we're near the current point
+    if (currentPoint && distance(currentPoint, canvasPoint) < threshold) {
+      return currentPoint;
+    }
+    
     return null;
   };
 
@@ -373,15 +479,14 @@ export default function App() {
     const rect = canvasRef.current.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
-    const point = { x, y };
     
-    // Convert point to canvas coordinates considering zoom and offset
+    // Convert to canvas coordinates
     const canvasPoint = {
-      x: (point.x - offset.x) / zoom,
-      y: (point.y - offset.y) / zoom
+      x: (x - offset.x) / zoom,
+      y: (y - offset.y) / zoom
     };
     
-    // First check if we're clicking on a line endpoint
+    // Check for endpoint selection
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       if (distance(line.start, canvasPoint) < 10) {
@@ -398,18 +503,38 @@ export default function App() {
       }
     }
     
-    // Then check if we're clicking on a line
+    // Check for line selection
     const lineAtPoint = findLineAtPoint(canvasPoint);
     if (lineAtPoint) {
+      const line = lines[lineAtPoint.index];
       setSelectedLine(lineAtPoint.index);
+      setInputLength(calculateLength(line.start, line.end).toString());
       setIsDragging(true);
       setDragStart(canvasPoint);
     } else {
       setSelectedLine(null);
+      setInputLength("");
     }
   };
 
   const handleMouseUp = () => {
+    // If we were dragging an endpoint, reset the selection
+    if (selectedPoint) {
+      setSelectedPoint(null);
+    }
+    
+    // Check if any lines have 0mm length and delete them
+    const updatedLines = lines.filter(line => {
+      const length = calculateLength(line.start, line.end);
+      return length > 0;
+    });
+    
+    // If any lines were deleted, update the state
+    if (updatedLines.length !== lines.length) {
+      setLines(updatedLines);
+      setSelectedLine(null);
+    }
+    
     setIsDragging(false);
     setDragStart(null);
   };
@@ -419,62 +544,59 @@ export default function App() {
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
     
-    // First try to snap to grid
-    let snapped = snapToGrid(x, y);
+    // First try to snap to existing endpoints
+    let snapped = null;
+    const nearbyPoint = findNearbyPoint({ x, y });
     
-    // Check for nearby endpoints even when not drawing a line
-    const nearbyPoint = findNearbyPoint(snapped);
     if (nearbyPoint) {
+      // If we found a nearby endpoint, use it
       snapped = nearbyPoint;
       setSnapPoint(nearbyPoint);
-      
-      // If in update mode, set the hovering endpoint flag
       if (isUpdateMode) {
         setIsHoveringEndpoint(true);
       }
     } else {
-      // Always show snap point, even when snapping to grid
+      // If no nearby endpoint, snap to grid
+      snapped = snapToGrid(x, y);
       setSnapPoint(snapped);
-      // Reset the hovering endpoint flag when not hovering over an endpoint
       setIsHoveringEndpoint(false);
     }
     
-    // Check if we're hovering over a line in update mode
+    // Handle update mode hover effects
     if (isUpdateMode && !isDragging) {
       const lineAtPoint = findLineAtPoint(snapped);
-      if (lineAtPoint) {
-        setHoveredLineId(lines[lineAtPoint.index].id);
-      } else {
-        setHoveredLineId(null);
-      }
+      setHoveredLineId(lineAtPoint ? lines[lineAtPoint.index].id : null);
     } else {
       setHoveredLineId(null);
     }
     
     // Handle dragging in update mode
     if (isUpdateMode && isDragging && dragStart) {
-      // Hide snap indicator when dragging in update mode
-      setSnapPoint(null);
+      // Don't hide snap indicator when dragging in update mode
+      // setSnapPoint(null);
       
       if (selectedPoint) {
-        // Moving a line endpoint - ensure it snaps to grid
-        const updated = lines.map((line) => {
-          if (line.id === selectedPoint.lineId) {
-            return {
-              ...line,
-              [selectedPoint.pointKey]: snapped
-            };
+        // Moving a line endpoint
+        const updatedLines = lines.map(line => 
+          line.id === selectedPoint.lineId
+            ? { ...line, [selectedPoint.pointKey]: snapped }
+            : line
+        );
+        setLines(updatedLines);
+        
+        // Update input length if the selected line is the same as the currently selected line
+        if (selectedLine !== null && lines[selectedLine].id === selectedPoint.lineId) {
+          const updatedLine = updatedLines.find(line => line.id === selectedPoint.lineId);
+          if (updatedLine) {
+            setInputLength(calculateLength(updatedLine.start, updatedLine.end).toString());
           }
-          return line;
-        });
-        setLines(updated);
+        }
       } else if (selectedLine !== null) {
-        // Moving an entire line - ensure both endpoints snap to grid
+        // Moving an entire line
         const line = lines[selectedLine];
         const dx = snapped.x - dragStart.x;
         const dy = snapped.y - dragStart.y;
         
-        // Calculate new positions for both endpoints
         const newStart = {
           x: Math.round((line.start.x + dx) / GRID_SIZE) * GRID_SIZE,
           y: Math.round((line.start.y + dy) / GRID_SIZE) * GRID_SIZE
@@ -486,42 +608,49 @@ export default function App() {
         };
         
         const updated = [...lines];
-        updated[selectedLine] = {
-          ...line,
-          start: newStart,
-          end: newEnd
-        };
-        
+        updated[selectedLine] = { ...line, start: newStart, end: newEnd };
         setLines(updated);
+        
+        // Update input length
+        setInputLength(calculateLength(newStart, newEnd).toString());
+        
         setDragStart(snapped);
       }
       return;
     }
     
-    // Update hover point and current length if we're currently drawing a line
+    // Update hover point and current length for new line drawing
     if (currentPoint && !isUpdateMode) {
       setHoverPoint(snapped);
-      // Calculate and update the current length
-      const length = calculateLength(currentPoint, snapped);
-      setCurrentLength(length);
+      setCurrentLength(calculateLength(currentPoint, snapped));
     } else if (!isUpdateMode) {
-      // In default drawing mode (not update mode), always show snap point
       setHoverPoint(snapped);
     }
   };
 
   const handleClick = (e) => {
-    // If we're in update mode, deselect the line when clicking on empty space
+    const rect = canvasRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    
+    // First try to snap to existing endpoints, then to grid
+    let snapped = null;
+    const nearbyPoint = findNearbyPoint({ x, y });
+    
+    if (nearbyPoint) {
+      // If we found a nearby endpoint, use it
+      snapped = nearbyPoint;
+    } else {
+      // If no nearby endpoint, snap to grid
+      snapped = snapToGrid(x, y);
+    }
+
+    // Handle update mode
     if (isUpdateMode) {
-      const rect = canvasRef.current.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
-      const point = { x, y };
-      
-      // Convert point to canvas coordinates considering zoom and offset
+      // Convert to canvas coordinates for line detection
       const canvasPoint = {
-        x: (point.x - offset.x) / zoom,
-        y: (point.y - offset.y) / zoom
+        x: (x - offset.x) / zoom,
+        y: (y - offset.y) / zoom
       };
       
       // Check if we clicked on a line or endpoint
@@ -538,38 +667,40 @@ export default function App() {
       }
       return;
     }
-    
-    const rect = canvasRef.current.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    
-    // Use the snap point if available, otherwise snap to grid
-    let snapped = snapPoint || snapToGrid(x, y);
 
+    // Handle point selection
     if (selectedPoint) {
-      const updated = lines.map((line) => {
-        if (line.id === selectedPoint.lineId) {
-          line[selectedPoint.pointKey] = snapped;
+      const updatedLines = lines.map(line => 
+        line.id === selectedPoint.lineId
+          ? { ...line, [selectedPoint.pointKey]: snapped }
+          : line
+      );
+      setLines(updatedLines);
+      
+      // Update input length if the selected line is the same as the currently selected line
+      if (selectedLine !== null) {
+        const updatedLine = updatedLines.find(line => line.id === selectedPoint.lineId);
+        if (updatedLine) {
+          setInputLength(calculateLength(updatedLine.start, updatedLine.end).toString());
         }
-        return line;
-      });
-      setLines(updated);
+      }
+      
       setSelectedPoint(null);
       setSnapPoint(null);
       setCurrentLength(0);
       return;
     }
 
+    // Handle line creation
     if (!currentPoint) {
       setCurrentPoint(snapped);
       setCurrentLength(0);
     } else {
-      const newLine = {
+      setLines([...lines, {
         id: Date.now(),
         start: currentPoint,
         end: snapped,
-      };
-      setLines([...lines, newLine]);
+      }]);
       setCurrentPoint(null);
       setHoverPoint(null);
       setSnapPoint(null);
@@ -639,6 +770,23 @@ export default function App() {
     }
   };
 
+  // Line length input component
+  const LineLengthInput = useCallback(({ value, onChange, id }) => (
+    <div className="flex items-center gap-1">
+      <label htmlFor={id}>Set length (mm):</label>
+      <input
+        id={id}
+        type="number"
+        value={value}
+        onChange={onChange}
+        className="w-20 px-1 py-0.5 border rounded"
+        min="0"
+        step="1"
+        placeholder="Length"
+      />
+    </div>
+  ), []);
+
   return (
     <div className="flex flex-col h-screen overflow-hidden">
       <div className="p-4 bg-gray-100 border-b">
@@ -667,6 +815,14 @@ export default function App() {
                 className="px-4 py-2 border rounded cursor-pointer"
               />
             </div>
+            <label>
+              <input
+                type="checkbox"
+                checked={useFineGrid}
+                onChange={(e) => setUseFineGrid(e.target.checked)}
+              />
+              Fine Grid (1mm)
+            </label>
           </div>
           
           {/* Second row: Display options */}
@@ -727,7 +883,34 @@ export default function App() {
             <span>
               {isUpdateMode 
                 ? selectedLine !== null 
-                  ? `Update Mode: Line selected. Length: ${calculateLength(lines[selectedLine].start, lines[selectedLine].end)} mm. Click elsewhere to deselect.` 
+                  ? (
+                    <div className="flex items-center gap-2">
+                      <span>Update Mode: Line selected. Length: {calculateLength(lines[selectedLine].start, lines[selectedLine].end)} mm. Click elsewhere to deselect.</span>
+                      <LineLengthInput 
+                        id="updateLineLength"
+                        value={inputLength}
+                        onChange={(e) => {
+                          setInputLength(e.target.value);
+                          if (e.target.value && !isNaN(e.target.value) && parseFloat(e.target.value) > 0) {
+                            const line = lines[selectedLine];
+                            const direction = {
+                              x: line.end.x - line.start.x,
+                              y: line.end.y - line.start.y
+                            };
+                            const newEnd = calculateEndPointFromLength(line.start, parseFloat(e.target.value), direction);
+                            if (newEnd) {
+                              const updated = [...lines];
+                              updated[selectedLine] = {
+                                ...line,
+                                end: newEnd
+                              };
+                              setLines(updated);
+                            }
+                          }
+                        }}
+                      />
+                    </div>
+                  )
                   : "Update Mode: Hold Ctrl to select and move lines" 
                 : "Click to start drawing a line"}
             </span>

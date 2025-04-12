@@ -1,0 +1,13 @@
+.toolbar label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 16px;
+  cursor: pointer;
+}
+
+.toolbar input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+} 
