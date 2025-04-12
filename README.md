@@ -8,6 +8,8 @@ A simple CAD application built with React that allows you to draw lines on a can
 - Grid snapping for precise drawing
 - Save and load your drawings
 - Edit existing lines by right-clicking on endpoints
+- Zoomed grid
+- Update mode for previous frawed lines
 
 ## Getting Started
 
