@@ -228,12 +228,11 @@ export default function App() {
       // Position text based on line orientation
       if (isHorizontal) {
         // For horizontal lines, place text below
-        ctx.fillText(`${length} mm`, midX, midY + 15 / zoom);
+        ctx.fillText(`${length} mm`, midX, midY + 12 / zoom);
       } else {
-        // For vertical lines, place text to the right with a 2cm margin
-        // 1cm = 10mm = 1 grid unit at 100% zoom
-        // Use a fixed pixel value that scales with zoom to ensure consistent spacing
-        const margin = 30 * (zoom); // Fixed pixel value that scales with zoom
+        // For vertical lines, place text to the right with a consistent margin
+        // Use a fixed value that scales with zoom to maintain consistent distance
+        const margin = 22; // Fixed pixel value
         ctx.fillText(`${length} mm`, midX + margin, midY);
       }
     }
@@ -429,13 +428,32 @@ export default function App() {
   };
 
   const findLineAtPoint = (point, threshold = 10) => {
+    let closestLine = null;
+    let closestDistance = threshold;
+    let closestIndex = -1;
+    let shortestLength = Infinity;
+    
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       // Check if point is close to the line
       const distanceToLine = distanceToLineSegment(point, line.start, line.end);
-      if (distanceToLine < threshold) {
-        return { line, index: i };
+      
+      // Calculate the length of the line
+      const lineLength = distance(line.start, line.end);
+      
+      // If this line is closer than our current closest, or if it's equally close but shorter,
+      // update our selection
+      if (distanceToLine < closestDistance || 
+          (distanceToLine === closestDistance && lineLength < shortestLength)) {
+        closestDistance = distanceToLine;
+        closestLine = line;
+        closestIndex = i;
+        shortestLength = lineLength;
       }
+    }
+    
+    if (closestLine) {
+      return { line: closestLine, index: closestIndex };
     }
     return null;
   };
@@ -480,7 +498,7 @@ export default function App() {
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
     
-    // Convert to canvas coordinates
+    // Convert to canvas coordinates for line detection
     const canvasPoint = {
       x: (x - offset.x) / zoom,
       y: (y - offset.y) / zoom
@@ -503,7 +521,7 @@ export default function App() {
       }
     }
     
-    // Check for line selection
+    // Check for line selection - use the original canvas point
     const lineAtPoint = findLineAtPoint(canvasPoint);
     if (lineAtPoint) {
       const line = lines[lineAtPoint.index];
@@ -544,6 +562,12 @@ export default function App() {
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
     
+    // Convert to canvas coordinates for line detection
+    const canvasPoint = {
+      x: (x - offset.x) / zoom,
+      y: (y - offset.y) / zoom
+    };
+    
     // First try to snap to existing endpoints
     let snapped = null;
     const nearbyPoint = findNearbyPoint({ x, y });
@@ -562,9 +586,9 @@ export default function App() {
       setIsHoveringEndpoint(false);
     }
     
-    // Handle update mode hover effects
+    // Handle update mode hover effects - use the original canvas point for line detection
     if (isUpdateMode && !isDragging) {
-      const lineAtPoint = findLineAtPoint(snapped);
+      const lineAtPoint = findLineAtPoint(canvasPoint);
       setHoveredLineId(lineAtPoint ? lines[lineAtPoint.index].id : null);
     } else {
       setHoveredLineId(null);
