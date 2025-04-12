@@ -12,6 +12,11 @@ code {
     monospace;
 }
 
+.text-margin {
+  margin-left: 1rem;
+  margin-bottom: 1rem;
+}
+
 .p-4 {
   padding: 1rem;
 }
@@ -45,3 +50,7 @@ code {
 .cursor-pointer {
   cursor: pointer;
 } 
+
+.flex-wrapper {
+  display: flex;
+}

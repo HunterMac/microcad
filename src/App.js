@@ -7,6 +7,8 @@ const ZOOM_STEP = 0.1;
 // 1 grid unit = 1cm at 100% zoom
 const MM_PER_GRID = 10; // 1cm = 10mm
 const STORAGE_KEY = "cad_project_data";
+const TOP_MARGIN = 100; // Reduced from 120 to 100
+const BOTTOM_MARGIN = 60; // Space for status information
 
 export default function App() {
   const [lines, setLines] = useState([]);
@@ -22,9 +24,47 @@ export default function App() {
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState(null);
   const [showDimensions, setShowDimensions] = useState(false);
+  const [showGrid, setShowGrid] = useState(true);
   const [isHoveringEndpoint, setIsHoveringEndpoint] = useState(false);
   const [hoveredLineId, setHoveredLineId] = useState(null);
+  const [canvasSize, setCanvasSize] = useState({ width: 1200, height: 800 });
   const canvasRef = useRef(null);
+  const containerRef = useRef(null);
+
+  // Calculate canvas size based on window dimensions
+  useEffect(() => {
+    const updateCanvasSize = () => {
+      if (containerRef.current) {
+        const containerWidth = containerRef.current.clientWidth;
+        // Add a safety margin to ensure the canvas fits within the viewport
+        const containerHeight = window.innerHeight - TOP_MARGIN - BOTTOM_MARGIN - 20; // Added 20px safety margin
+        
+        setCanvasSize({
+          width: containerWidth,
+          height: Math.max(400, containerHeight) // Ensure minimum height of 400px
+        });
+      }
+    };
+
+    // Initial calculation
+    updateCanvasSize();
+
+    // Add event listener for window resize
+    window.addEventListener('resize', updateCanvasSize);
+    
+    // Cleanup
+    return () => {
+      window.removeEventListener('resize', updateCanvasSize);
+    };
+  }, []);
+
+  // Update canvas dimensions when canvasSize changes
+  useEffect(() => {
+    if (canvasRef.current) {
+      canvasRef.current.width = canvasSize.width;
+      canvasRef.current.height = canvasSize.height;
+    }
+  }, [canvasSize]);
 
   // Load project from local storage on initial render
   useEffect(() => {
@@ -65,10 +105,16 @@ export default function App() {
   const drawGrid = useCallback((ctx) => {
     ctx.strokeStyle = "#ddd";
     const scaledGridSize = GRID_SIZE;
+    
+    // Get the current canvas dimensions
+    const canvasWidth = canvasRef.current.width;
+    const canvasHeight = canvasRef.current.height;
+    
+    // Calculate grid boundaries based on current canvas size
     const startX = Math.floor(-offset.x / zoom / scaledGridSize) * scaledGridSize;
     const startY = Math.floor(-offset.y / zoom / scaledGridSize) * scaledGridSize;
-    const endX = Math.ceil((1200 - offset.x) / zoom / scaledGridSize) * scaledGridSize;
-    const endY = Math.ceil((800 - offset.y) / zoom / scaledGridSize) * scaledGridSize;
+    const endX = Math.ceil((canvasWidth - offset.x) / zoom / scaledGridSize) * scaledGridSize;
+    const endY = Math.ceil((canvasHeight - offset.y) / zoom / scaledGridSize) * scaledGridSize;
 
     // Set minimum line width for grid
     ctx.lineWidth = Math.max(1, 1 / zoom);
@@ -162,7 +208,10 @@ export default function App() {
     ctx.translate(offset.x, offset.y);
     ctx.scale(zoom, zoom);
     
-    drawGrid(ctx);
+    // Only draw the grid if showGrid is true
+    if (showGrid) {
+      drawGrid(ctx);
+    }
     
     // Draw all lines
     lines.forEach((line, index) => {
@@ -184,7 +233,7 @@ export default function App() {
       drawSnapIndicator(ctx, snapPoint);
     }
     ctx.restore();
-  }, [lines, currentPoint, hoverPoint, snapPoint, zoom, offset, drawGrid, selectedLine, drawLine, drawSnapIndicator, showDimensions, hoveredLineId]);
+  }, [lines, currentPoint, hoverPoint, snapPoint, zoom, offset, drawGrid, selectedLine, drawLine, drawSnapIndicator, showDimensions, hoveredLineId, canvasSize, showGrid]);
 
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -578,60 +627,112 @@ export default function App() {
     setOffset({ x: 0, y: 0 });
   };
 
+  const handleClear = () => {
+    if (window.confirm("Are you sure you want to clear all lines? This action cannot be undone.")) {
+      setLines([]);
+      setCurrentPoint(null);
+      setHoverPoint(null);
+      setSelectedPoint(null);
+      setSnapPoint(null);
+      setSelectedLine(null);
+      setCurrentLength(0);
+    }
+  };
+
   return (
-    <div className="p-4">
-      <div className="mb-2 flex items-center gap-4">
-        <input
-          type="button"
-          value="Save"
-          onClick={handleSave}
-          className="mr-2 px-4 py-2 border rounded cursor-pointer"
-        />
-        <input type="file" onChange={handleLoad} />
-        <div className="flex items-center gap-2">
-          <span>Zoom: {Math.round(zoom * 100)}%</span>
-          <input
-            type="button"
-            value="Reset Zoom"
-            onClick={handleResetZoom}
-            className="px-4 py-2 border rounded cursor-pointer"
-          />
-        </div>
-        <div className="flex items-center gap-2">
-          <input
-            type="checkbox"
-            id="showDimensions"
-            checked={showDimensions}
-            onChange={(e) => setShowDimensions(e.target.checked)}
-            className="mr-1"
-          />
-          <label htmlFor="showDimensions">Display dimensions</label>
+    <div className="flex flex-col h-screen overflow-hidden">
+      <div className="p-4 bg-gray-100 border-b">
+        <div className="flex-wrapper flex-col gap-4">
+          {/* First row: Action buttons */}
+          <div className="flex flex-wrap items-center gap-4">
+            <input
+              type="button"
+              value="Save"
+              onClick={handleSave}
+              className="px-4 py-2 border rounded cursor-pointer"
+            />
+            <input type="file" onChange={handleLoad} />
+            <input
+              type="button"
+              value="Clear"
+              onClick={handleClear}
+              className="px-4 py-2 border rounded cursor-pointer bg-red-100 hover:bg-red-200"
+            />
+            <div className="flex items-center gap-2">
+              <span>Zoom: {Math.round(zoom * 100)}%</span>
+              <input
+                type="button"
+                value="Reset Zoom"
+                onClick={handleResetZoom}
+                className="px-4 py-2 border rounded cursor-pointer"
+              />
+            </div>
+          </div>
+          
+          {/* Second row: Display options */}
+          <div className="flex-wrapper" >
+            <div>
+              <input
+                type="checkbox"
+                id="showDimensions"
+                checked={showDimensions}
+                onChange={(e) => setShowDimensions(e.target.checked)}
+                className="mr-1"
+              />
+              <label htmlFor="showDimensions">Display dimensions</label>
+            </div>
+            <div>
+              <input
+                type="checkbox"
+                id="showGrid"
+                checked={showGrid}
+                onChange={(e) => setShowGrid(e.target.checked)}
+                className="mr-1"
+              />
+              <label htmlFor="showGrid">Display grid</label>
+            </div>
+          </div>
         </div>
       </div>
-      <canvas
-        ref={canvasRef}
-        width={1200}
-        height={800}
-        onClick={handleClick}
-        onMouseDown={handleMouseDown}
-        onMouseUp={handleMouseUp}
-        onMouseMove={handleMouseMove}
-        onContextMenu={handlePointSelect}
-        onWheel={handleWheel}
-        style={{ border: "1px solid black", cursor: isUpdateMode ? "move" : "crosshair" }}
-      />
-      <div className="mt-2 text-sm">
-        {currentPoint && hoverPoint ? (
-          <span>Current line length: {currentLength} mm</span>
-        ) : (
-          <span>
-            {isUpdateMode 
-              ? selectedLine !== null 
-                ? `Update Mode: Line selected. Length: ${calculateLength(lines[selectedLine].start, lines[selectedLine].end)} mm. Click elsewhere to deselect.` 
-                : "Update Mode: Hold Ctrl to select and move lines" 
-              : "Click to start drawing a line"}
-          </span>
-        )}
+      
+      <div 
+        ref={containerRef} 
+        className="flex-grow pt-2 px-4 pb-4 overflow-auto"
+        style={{ minHeight: '400px', maxHeight: 'calc(100vh - 160px)' }}
+      >
+        <canvas
+          ref={canvasRef}
+          width={canvasSize.width}
+          height={canvasSize.height}
+          onClick={handleClick}
+          onMouseDown={handleMouseDown}
+          onMouseUp={handleMouseUp}
+          onMouseMove={handleMouseMove}
+          onContextMenu={handlePointSelect}
+          onWheel={handleWheel}
+          style={{ 
+            border: "1px solid black", 
+            cursor: isUpdateMode ? "move" : "crosshair",
+            width: '100%',
+            height: '100%'
+          }}
+        />
+      </div>
+      
+      <div className="p-3 bg-gray-100 border-t text-margin">
+        <div className="text-sm">
+          {currentPoint && hoverPoint ? (
+            <span>Current line length: {currentLength} mm</span>
+          ) : (
+            <span>
+              {isUpdateMode 
+                ? selectedLine !== null 
+                  ? `Update Mode: Line selected. Length: ${calculateLength(lines[selectedLine].start, lines[selectedLine].end)} mm. Click elsewhere to deselect.` 
+                  : "Update Mode: Hold Ctrl to select and move lines" 
+                : "Click to start drawing a line"}
+            </span>
+          )}
+        </div>
       </div>
     </div>
   );
